@@ -20,7 +20,7 @@ setup(
         "pillow>=9.0.0",
         "numpy>=1.23.0",
         "scipy>=1.10.0",
-        "anls>=0.1.0",  # For ANLS scoring (DocVQA, InfoVQA, OCR-VQA)
+        "anls>=0.0.2",  # For ANLS scoring (DocVQA, InfoVQA, OCR-VQA)
         "apted>=1.0.3",  # For TEDS table evaluation scoring
         "editdistance>=0.6.0",  # For string distance metrics
         "latex2sympy2>=1.9.0",  # For MathVision LaTeX evaluation
