@@ -118,4 +118,15 @@ Main evaluation class.
 - `save(path)`: Save report to JSON file
 
 ## Citation
-TBA
+
+```bibtex
+@misc{datologyai2026datbenchdiscriminativefaithfulefficient,
+      title={DatBench: Discriminative, Faithful, and Efficient VLM Evaluations}, 
+      author={DatologyAI and : and Siddharth Joshi and Haoli Yin and Rishabh Adiga and Ricardo Monti and Aldo Carranza and Alex Fang and Alvin Deng and Amro Abbas and Brett Larsen and Cody Blakeney and Darren Teh and David Schwab and Fan Pan and Haakon Mongstad and Jack Urbanek and Jason Lee and Jason Telanoff and Josh Wills and Kaleigh Mentzer and Luke Merrick and Parth Doshi and Paul Burstein and Pratyush Maini and Scott Loftin and Spandan Das and Tony Jiang and Vineeth Dorna and Zhengping Wang and Bogdan Gaza and Ari Morcos and Matthew Leavitt},
+      year={2026},
+      eprint={2601.02316},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2601.02316}, 
+}
+```
