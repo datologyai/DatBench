@@ -69,8 +69,8 @@ def _extract_letter(text: str, choices: List[str]) -> str:
 
     # Prefer explicit boxed markers at the end of CoT
     boxed_patterns = [
-        r"\\boxed\\{\\s*([A-Ea-e])\\s*\\}",
-        r"<\\|begin_of_box\\|>\\s*([A-Ea-e])\\s*<\\|end_of_box\\|>",
+        r"\\+boxed\{\s*([A-Ea-e])\s*\}",
+        r"<\|begin_of_box\|>\s*([A-Ea-e])\s*<\|end_of_box\|>",
     ]
     for pat in boxed_patterns:
         m = re.search(pat, text)
