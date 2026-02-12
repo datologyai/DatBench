@@ -274,8 +274,6 @@ class DatBenchEvaluator:
             else:
                 canonical_answers = [sample.answer]
             scorer_sample["all_answers"] = canonical_answers
-            scorer_sample["Answer"] = canonical_answers
-            scorer_sample["ground_truth_answer"] = canonical_answers
 
         elif dataset_name in ['charxiv_descriptive', 'charxiv_reasoning']:
             if 'question_type' in metadata:
