@@ -266,8 +266,14 @@ class DatBenchEvaluator:
                 scorer_sample["year_flags"] = metadata["year_flags"]
             if 'is_multi_turn' in metadata:
                 scorer_sample["is_multi_turn"] = metadata["is_multi_turn"]
-            if 'all_answers' in metadata:
-                scorer_sample["all_answers"] = metadata["all_answers"]
+            metadata_answers = metadata.get("all_answers")
+            if isinstance(metadata_answers, list) and metadata_answers:
+                canonical_answers = metadata_answers
+            elif sample.all_answers:
+                canonical_answers = sample.all_answers
+            else:
+                canonical_answers = [sample.answer]
+            scorer_sample["all_answers"] = canonical_answers
 
         elif dataset_name in ['charxiv_descriptive', 'charxiv_reasoning']:
             if 'question_type' in metadata:

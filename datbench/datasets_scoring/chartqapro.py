@@ -9,6 +9,24 @@ from typing import Any, Dict, List, Optional, Tuple
 from .evaluation_utils.erma_utils import extract_final_answer
 
 
+def _resolve_chartqapro_answers(sample: Dict[str, Any]) -> List[str]:
+    """Resolve canonical ChartQAPro answers with legacy fallback."""
+    answer_raw = sample.get("all_answers")
+    if isinstance(answer_raw, list) and answer_raw:
+        return answer_raw
+
+    legacy_answer = sample.get("Answer") or sample.get("ground_truth_answer")
+    if isinstance(legacy_answer, list):
+        return legacy_answer
+    if legacy_answer is not None:
+        return [legacy_answer]
+
+    canonical_answer = sample.get("answer")
+    if canonical_answer is not None:
+        return [canonical_answer]
+    return []
+
+
 def score_sample(sample: Dict[str, Any], model_output: Any) -> Dict[str, Any]:
     """Score a single ChartQAPro sample using the official scoring logic.
 
@@ -27,15 +45,13 @@ def score_sample(sample: Dict[str, Any], model_output: Any) -> Dict[str, Any]:
 
     if is_multi_turn:
         # Multi-turn scoring: score each turn independently
-        answer_raw = sample.get("Answer") or sample.get("ground_truth_answer")
+        answer_raw = _resolve_chartqapro_answers(sample)
         year_flags = sample.get("Year") or sample.get("year_flags", [])
         question_type = sample.get("Question Type") or sample.get(
             "question_type", "unknown"
         )
 
         # Ensure we have lists
-        if not isinstance(answer_raw, list):
-            answer_raw = [answer_raw]
         if not isinstance(year_flags, list):
             year_flags = [year_flags]
         if not isinstance(model_output, list):
@@ -147,7 +163,7 @@ def score_sample(sample: Dict[str, Any], model_output: Any) -> Dict[str, Any]:
         }
     else:
         # Single-turn scoring: original logic
-        answer_raw = sample.get("Answer") or sample.get("ground_truth_answer")
+        answer_raw = _resolve_chartqapro_answers(sample)
         # Answer might be a list, extract last element like the official script
         if isinstance(answer_raw, list) and len(answer_raw) > 0:
             target = str(answer_raw[-1]).strip(".").strip("\n")
