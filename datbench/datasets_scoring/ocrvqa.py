@@ -23,39 +23,26 @@ def score_sample(sample: Dict[str, Any], model_output: str) -> Dict[str, Any]:
     # Extract concise answer
     pred_answer = extract_final_answer(model_output)
 
-    # Compute ANLS
-    anls_score_val = 0.0
-    if answer:
-        try:
-            from anls import anls_score
-            # Use official ANLS package
-            anls_score_val = anls_score(
-                prediction=pred_answer,
-                gold_labels=[answer],  # Single answer as list
-                threshold=0.5,
-            )
-        except ImportError:
-            # Fallback: whitespace normalize
-            def norm_ws(s: str) -> str:
-                s = (s or "").strip().lower()
-                return " ".join(s.split())
-
-            pred_norm = norm_ws(pred_answer)
-            gt_norm = norm_ws(answer)
-            anls_score_val = _compute_anls(pred_norm, gt_norm)
+    # Compute ANLS variants:
+    # - raw/continuous similarity (no threshold)
+    # - thresholded ANLS@0.5 (standard ANLS clipping)
+    # - binary threshold@0.5 accuracy (new explicit metric)
+    pred_norm = _normalize_answer(pred_answer)
+    gt_norm = _normalize_answer(answer)
+    anls_raw = _compute_anls_raw(pred_norm, gt_norm) if answer else 0.0
+    anls_thresholded = _apply_anls_threshold(anls_raw)
+    threshold_0_5_accuracy = _threshold_at_0_5(anls_raw)
 
     # Compute exact match
-    def norm_ws(s: str) -> str:
-        s = (s or "").strip().lower()
-        return " ".join(s.split())
-
-    pred_norm = norm_ws(pred_answer)
-    gt_norm = norm_ws(answer)
     exact_match = 1.0 if pred_norm == gt_norm else 0.0
 
     return {
-        "score": anls_score_val,  # Primary metric: ANLS
-        "anls": anls_score_val,
+        # Keep score as continuous metric so aggregate accuracy captures
+        # partial-correctness instead of hard-thresholding.
+        "score": anls_raw,
+        "anls": anls_raw,
+        "anls_thresholded_0_5": anls_thresholded,
+        "threshold_0_5_accuracy": threshold_0_5_accuracy,
         "exact_match": exact_match,
         "ground_truth": answer,
         "model_output": model_output,
@@ -72,22 +59,38 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
     Returns:
         Dictionary with anls, exact_match, accuracy, score
     """
-    anls_scores = []
+    anls_raw_scores = []
+    anls_thresholded_scores = []
+    threshold_0_5_scores = []
     exact_match_scores = []
 
     for result in results:
         score_details = result.get("score_details", result)
-        anls_scores.append(score_details.get("anls", 0.0))
+        anls_raw_scores.append(score_details.get("anls", score_details.get("score", 0.0)))
+        anls_thresholded_scores.append(score_details.get("anls_thresholded_0_5", 0.0))
+        threshold_0_5_scores.append(score_details.get("threshold_0_5_accuracy", 0.0))
         exact_match_scores.append(score_details.get("exact_match", 0.0))
 
-    anls_avg = sum(anls_scores) / len(anls_scores) if anls_scores else 0.0
+    anls_raw_avg = sum(anls_raw_scores) / len(anls_raw_scores) if anls_raw_scores else 0.0
+    anls_thresholded_avg = (
+        sum(anls_thresholded_scores) / len(anls_thresholded_scores)
+        if anls_thresholded_scores
+        else 0.0
+    )
+    threshold_0_5_avg = (
+        sum(threshold_0_5_scores) / len(threshold_0_5_scores)
+        if threshold_0_5_scores
+        else 0.0
+    )
     exact_match_avg = sum(exact_match_scores) / len(exact_match_scores) if exact_match_scores else 0.0
 
     return {
-        "anls": anls_avg,
+        "anls": anls_raw_avg,
+        "anls_thresholded_0_5": anls_thresholded_avg,
+        "threshold_0_5_accuracy": threshold_0_5_avg,
         "exact_match": exact_match_avg,
-        "accuracy": anls_avg,  # ANLS is primary metric
-        "score": anls_avg,  # Alias for compatibility
+        "accuracy": anls_raw_avg,  # Primary metric: continuous ANLS
+        "score": anls_raw_avg,  # Alias for compatibility
     }
 
 
@@ -100,8 +103,8 @@ def _normalize_answer(answer: str) -> str:
     return " ".join(answer.strip().lower().split())
 
 
-def _compute_anls(prediction: str, ground_truth: str) -> float:
-    """Compute ANLS (threshold 0.5)."""
+def _compute_anls_raw(prediction: str, ground_truth: str) -> float:
+    """Compute raw ANLS similarity without threshold clipping."""
     if not prediction and not ground_truth:
         return 1.0
     if not prediction or not ground_truth:
@@ -111,9 +114,17 @@ def _compute_anls(prediction: str, ground_truth: str) -> float:
     max_len = max(len(prediction), len(ground_truth))
     normalized_dist = lev_dist / max_len
 
-    if normalized_dist > 0.5:
-        return 0.0
     return 1.0 - normalized_dist
+
+
+def _apply_anls_threshold(raw_score: float, threshold: float = 0.5) -> float:
+    """Apply standard ANLS thresholding."""
+    return raw_score if raw_score >= threshold else 0.0
+
+
+def _threshold_at_0_5(raw_score: float) -> float:
+    """Binary threshold metric requested for tracking hard 0/1 accuracy."""
+    return 1.0 if raw_score >= 0.5 else 0.0
 
 
 def _levenshtein_distance(s1: str, s2: str) -> int:
