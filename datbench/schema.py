@@ -121,7 +121,7 @@ class JudgeRequest:
         if idx != -1:
             judge_prompt = (
                 judge_prompt[:idx].rstrip()
-                + "\n\nRespond with exactly one line:\nanswer: true or answer: false.\n"
+                + "\n\nOutput exactly one boolean token: true or false. answer: "
             )
         return cls(
             id=sample.id,
