@@ -109,11 +109,25 @@ class JudgeRequest:
         vlm_response: VLMResponse
     ) -> "JudgeRequest":
         """Create a JudgeRequest from a sample and VLM response."""
+        judge_prompt = sample.judge_prompt or ""
+        # DatBench HF rows sometimes require a 2-line output:
+        #   Line 1: Reason: ...
+        #   Line 2: answer: true/false
+        # With low max_new_tokens this can truncate before the verdict. We only
+        # need the verdict for scoring, so rewrite the output format to a single
+        # verdict line while preserving all rubric content above.
+        marker = "Respond with exactly two lines:"
+        idx = judge_prompt.rfind(marker)
+        if idx != -1:
+            judge_prompt = (
+                judge_prompt[:idx].rstrip()
+                + "\n\nRespond with exactly one line:\nanswer: true or answer: false.\n"
+            )
         return cls(
             id=sample.id,
             vlm_response=vlm_response.parsed_answer or vlm_response.raw_output,
             ground_truth=sample.answer,
-            judge_prompt=sample.judge_prompt or "",
+            judge_prompt=judge_prompt,
         )
 
 
