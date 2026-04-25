@@ -154,6 +154,36 @@ def resolve_general_shards(snapshot_root: Path) -> list[Path]:
     return shards
 
 
+def empty_counts() -> dict[str, int]:
+    return {
+        "rows": 0,
+        "target_rows": 0,
+        "changed_rows": 0,
+        "target_policy_rows": 0,
+        "non_target_policy_rows": 0,
+    }
+
+
+def add_counts(total: dict[str, int], counts: dict[str, int]) -> None:
+    for key, value in counts.items():
+        total[key] += value
+
+
+def rewrite_parquet_file(source_path: Path, output_path: Path) -> dict[str, int]:
+    parquet_file = pq.ParquetFile(source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    counts = empty_counts()
+
+    with pq.ParquetWriter(output_path, parquet_file.schema_arrow) as writer:
+        for batch in parquet_file.iter_batches(batch_size=64):
+            table = pa.Table.from_batches([batch], schema=parquet_file.schema_arrow)
+            rewritten, batch_counts = rewrite_table(table, source_path)
+            add_counts(counts, batch_counts)
+            writer.write_table(rewritten)
+
+    return counts
+
+
 def prepare_repo_candidate(
     spec: RepoSpec,
     output_root: Path,
@@ -171,25 +201,13 @@ def prepare_repo_candidate(
     )
 
     file_reports: list[dict[str, object]] = []
-    totals = {
-        "rows": 0,
-        "target_rows": 0,
-        "changed_rows": 0,
-        "target_policy_rows": 0,
-        "non_target_policy_rows": 0,
-    }
+    totals = empty_counts()
 
     for source_path in resolve_general_shards(snapshot_root):
         relative_path = source_path.relative_to(snapshot_root)
         output_path = candidate_root / relative_path
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        table = pq.read_table(source_path)
-        rewritten, counts = rewrite_table(table, source_path)
-        pq.write_table(rewritten, output_path, compression="snappy")
-
-        for key, value in counts.items():
-            totals[key] += value
+        counts = rewrite_parquet_file(source_path, output_path)
+        add_counts(totals, counts)
         file_reports.append(
             {
                 "path": str(relative_path),
