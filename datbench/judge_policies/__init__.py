@@ -1,2 +1,1 @@
 """DatBench judge prompt policies."""
-
