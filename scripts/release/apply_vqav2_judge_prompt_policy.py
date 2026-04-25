@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub import HfApi, hf_hub_download
 
 from datbench.judge_policies.vqav2 import with_vqa_v2_final_answer_policy
 
@@ -147,10 +147,19 @@ def validate_rewrite(
             )
 
 
-def resolve_general_shards(snapshot_root: Path) -> list[Path]:
-    shards = sorted((snapshot_root / "general").glob("*.parquet"))
+def resolve_general_shard_names(api: HfApi, spec: RepoSpec) -> list[str]:
+    files = api.list_repo_files(
+        repo_id=spec.repo_id,
+        repo_type="dataset",
+        revision=spec.revision,
+    )
+    shards = sorted(
+        file_path
+        for file_path in files
+        if file_path.startswith("general/") and file_path.endswith(".parquet")
+    )
     if not shards:
-        raise FileNotFoundError(f"No general parquet shards found in {snapshot_root}")
+        raise FileNotFoundError(f"No general parquet shards found in {spec.repo_id}")
     return shards
 
 
@@ -169,13 +178,17 @@ def add_counts(total: dict[str, int], counts: dict[str, int]) -> None:
         total[key] += value
 
 
-def rewrite_parquet_file(source_path: Path, output_path: Path) -> dict[str, int]:
+def rewrite_parquet_file(
+    source_path: Path,
+    output_path: Path,
+    batch_size: int,
+) -> dict[str, int]:
     parquet_file = pq.ParquetFile(source_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     counts = empty_counts()
 
     with pq.ParquetWriter(output_path, parquet_file.schema_arrow) as writer:
-        for batch in parquet_file.iter_batches(batch_size=64):
+        for batch in parquet_file.iter_batches(batch_size=batch_size):
             table = pa.Table.from_batches([batch], schema=parquet_file.schema_arrow)
             rewritten, batch_counts = rewrite_table(table, source_path)
             add_counts(counts, batch_counts)
@@ -187,30 +200,31 @@ def rewrite_parquet_file(source_path: Path, output_path: Path) -> dict[str, int]
 def prepare_repo_candidate(
     spec: RepoSpec,
     output_root: Path,
+    batch_size: int,
 ) -> dict[str, object]:
+    api = HfApi()
     download_root = output_root / "downloads" / spec.name
     candidate_root = output_root / "candidates" / spec.name
-    snapshot_root = Path(
-        snapshot_download(
-            repo_id=spec.repo_id,
-            repo_type="dataset",
-            revision=spec.revision,
-            allow_patterns=["general/*.parquet"],
-            local_dir=download_root,
-        )
-    )
 
     file_reports: list[dict[str, object]] = []
     totals = empty_counts()
 
-    for source_path in resolve_general_shards(snapshot_root):
-        relative_path = source_path.relative_to(snapshot_root)
-        output_path = candidate_root / relative_path
-        counts = rewrite_parquet_file(source_path, output_path)
+    for shard_name in resolve_general_shard_names(api, spec):
+        source_path = Path(
+            hf_hub_download(
+                repo_id=spec.repo_id,
+                repo_type="dataset",
+                revision=spec.revision,
+                filename=shard_name,
+                local_dir=download_root,
+            )
+        )
+        output_path = candidate_root / shard_name
+        counts = rewrite_parquet_file(source_path, output_path, batch_size)
         add_counts(totals, counts)
         file_reports.append(
             {
-                "path": str(relative_path),
+                "path": shard_name,
                 **counts,
             }
         )
@@ -271,6 +285,7 @@ def parse_args() -> argparse.Namespace:
         help="Dataset repo spec: <repo_id>:<revision>[:expected_rows]",
     )
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--commit-message", default=DEFAULT_COMMIT_MESSAGE)
     return parser.parse_args()
@@ -282,7 +297,7 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     repo_reports = [
-        prepare_repo_candidate(parse_repo_spec(repo_spec), output_root)
+        prepare_repo_candidate(parse_repo_spec(repo_spec), output_root, args.batch_size)
         for repo_spec in args.repo
     ]
 
