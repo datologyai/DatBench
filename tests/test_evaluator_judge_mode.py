@@ -1,5 +1,10 @@
 from datbench import DatBenchEvaluator, JudgeResponse, VLMResponse
-from datbench.schema import JudgeRequest, VQA_V2_JUDGE_FINAL_ANSWER_POLICY
+from datbench.judge_policies.vqav2 import (
+    VQA_V2_JUDGE_FINAL_ANSWER_POLICY,
+    vqa_v2_judge_prompt_for_sample,
+    with_vqa_v2_final_answer_policy,
+)
+from datbench.schema import JudgeRequest
 
 
 def _row(
@@ -124,7 +129,7 @@ def test_vqav2_direct_scorer_remains_available_for_unconverted_rows():
     assert report.results[0].metadata["score_details"]["answer_type"] == "other"
 
 
-def test_vqav2_judge_request_adds_final_answer_policy():
+def test_vqav2_policy_helper_adds_final_answer_policy():
     row = _row(
         "judge-vqa",
         "vqa-v2",
@@ -135,16 +140,35 @@ def test_vqav2_judge_request_adds_final_answer_policy():
     )
     sample = DatBenchEvaluator([row], "general").samples_by_id["judge-vqa"]
 
+    judge_prompt = vqa_v2_judge_prompt_for_sample(sample)
+
+    assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY in judge_prompt
+    assert "\\boxed{...}" in judge_prompt
+
+
+def test_judge_request_uses_row_prompt_without_source_specific_mutation():
+    row = _row(
+        "judge-vqa",
+        "vqa-v2",
+        "none",
+        ["none", "nothing"],
+        eval_mode="judge",
+        judge_prompt=with_vqa_v2_final_answer_policy(
+            "Judge semantic VQA correctness."
+        ),
+    )
+    sample = DatBenchEvaluator([row], "general").samples_by_id["judge-vqa"]
+
     request = JudgeRequest.from_sample_and_response(
         sample,
         VLMResponse(id="judge-vqa", raw_output="\\boxed{None}"),
     )
 
     assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY in request.judge_prompt
-    assert "\\boxed{...}" in request.judge_prompt
+    assert request.judge_prompt == sample.judge_prompt
 
 
-def test_non_vqav2_judge_request_does_not_add_vqa_policy():
+def test_non_vqav2_policy_helper_does_not_add_vqa_policy():
     row = _row(
         "judge-chart",
         "chartqa",
@@ -155,10 +179,7 @@ def test_non_vqav2_judge_request_does_not_add_vqa_policy():
     )
     sample = DatBenchEvaluator([row], "general").samples_by_id["judge-chart"]
 
-    request = JudgeRequest.from_sample_and_response(
-        sample,
-        VLMResponse(id="judge-chart", raw_output="\\boxed{5}"),
-    )
+    judge_prompt = vqa_v2_judge_prompt_for_sample(sample)
 
-    assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY not in request.judge_prompt
-
+    assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY not in judge_prompt
+    assert judge_prompt == "Judge chart correctness."
