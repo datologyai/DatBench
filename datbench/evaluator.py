@@ -66,11 +66,29 @@ class DatBenchEvaluator:
         if verdict in {"incorrect", "false", "no", "0"}:
             return False
 
+        truthy = {"correct", "true", "yes", "1"}
+        falsy = {"incorrect", "false", "no", "0"}
         raw = (judge_response.raw_judge_output or "").strip()
         if not raw:
             return False
+        raw_lower = raw.lower()
+        if raw_lower in truthy:
+            return True
+        if raw_lower in falsy:
+            return False
+        if raw_lower.startswith("answer:"):
+            return raw_lower.split(":", 1)[1].strip() in truthy
 
-        parsed = json.loads(raw)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+        if isinstance(parsed, bool):
+            return parsed
+        if isinstance(parsed, str):
+            return parsed.strip().lower() in truthy
+        if not isinstance(parsed, dict):
+            return False
         for key in ("answer", "correct", "is_correct"):
             if key not in parsed:
                 continue
@@ -78,7 +96,7 @@ class DatBenchEvaluator:
             if isinstance(value, bool):
                 return value
             if isinstance(value, str):
-                return value.strip().lower() in {"true", "correct", "yes", "1"}
+                return value.strip().lower() in truthy
         return False
 
     def _score_judge_sample(

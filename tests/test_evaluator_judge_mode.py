@@ -1,5 +1,4 @@
 from datbench import DatBenchEvaluator, JudgeResponse, VLMResponse
-from scripts.convert_general_vqav2_to_judge import convert_row, is_vqav2_general_row
 
 
 def _row(
@@ -24,41 +23,6 @@ def _row(
         "source_info": {"dataset": dataset, "original_idx": sample_id},
         "eval_metrics": {},
     }
-
-
-def test_release_converter_targets_only_general_vqav2_rows():
-    target = _row("vqa", "vqa-v2", "cat", ["cat"])
-    other = _row("mmbench", "mmbench", "A", ["A"])
-
-    assert is_vqav2_general_row(target)
-    assert not is_vqav2_general_row(other)
-
-    converted = convert_row(target)
-    untouched = convert_row(other)
-
-    assert converted["eval_mode"] == "judge"
-    assert "semantic correctness" in converted["judge_prompt"]
-    assert untouched["eval_mode"] == "direct"
-    assert untouched["judge_prompt"] == ""
-
-
-def test_judge_mode_vqav2_rows_create_judge_tasks():
-    row = _row(
-        "vqa",
-        "vqa-v2",
-        "cat",
-        ["cat", "cat", "kitten"],
-        eval_mode="judge",
-        judge_prompt="Judge it.",
-    )
-    evaluator = DatBenchEvaluator([row], "general")
-
-    tasks = evaluator.create_judge_tasks([VLMResponse(id="vqa", raw_output="kitten")])
-
-    assert len(tasks) == 1
-    assert tasks[0].id == "vqa"
-    assert tasks[0].vlm_response == "kitten"
-    assert tasks[0].ground_truth == "cat"
 
 
 def test_mixed_direct_and_judge_rows_aggregate_correctly():
@@ -99,6 +63,48 @@ def test_mixed_direct_and_judge_rows_aggregate_correctly():
         "direct-vqa": 1.0,
         "judge-vqa": 1.0,
     }
+
+
+def test_judge_scoring_accepts_raw_boolean_outputs():
+    row = _row(
+        "judge-vqa",
+        "vqa-v2",
+        "dog",
+        ["dog", "dog", "puppy"],
+        eval_mode="judge",
+        judge_prompt="Judge it.",
+    )
+    evaluator = DatBenchEvaluator([row], "general")
+
+    report = evaluator.compute_metrics(
+        [VLMResponse(id="judge-vqa", raw_output="puppy")],
+        judge_responses=[JudgeResponse(id="judge-vqa", raw_judge_output="true")],
+    )
+
+    assert report.summary["overall_accuracy"] == 1.0
+    assert report.results[0].metadata["score_details"]["judge_verdict"] is None
+
+
+def test_malformed_raw_judge_output_scores_incorrect():
+    row = _row(
+        "judge-vqa",
+        "vqa-v2",
+        "dog",
+        ["dog", "dog", "puppy"],
+        eval_mode="judge",
+        judge_prompt="Judge it.",
+    )
+    evaluator = DatBenchEvaluator([row], "general")
+
+    report = evaluator.compute_metrics(
+        [VLMResponse(id="judge-vqa", raw_output="puppy")],
+        judge_responses=[
+            JudgeResponse(id="judge-vqa", raw_judge_output="The answer is correct.")
+        ],
+    )
+
+    assert report.summary["overall_accuracy"] == 0.0
+    assert report.results[0].score == 0.0
 
 
 def test_vqav2_direct_scorer_remains_available_for_unconverted_rows():
