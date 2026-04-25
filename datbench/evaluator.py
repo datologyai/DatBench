@@ -57,6 +57,50 @@ class DatBenchEvaluator:
 
         return judge_tasks
 
+    @staticmethod
+    def _judge_response_is_correct(judge_response: JudgeResponse) -> bool:
+        """Interpret a judge response as binary correctness."""
+        verdict = (judge_response.verdict or "").strip().lower()
+        if verdict in {"correct", "true", "yes", "1"}:
+            return True
+        if verdict in {"incorrect", "false", "no", "0"}:
+            return False
+
+        raw = (judge_response.raw_judge_output or "").strip()
+        if not raw:
+            return False
+
+        parsed = json.loads(raw)
+        for key in ("answer", "correct", "is_correct"):
+            if key not in parsed:
+                continue
+            value = parsed[key]
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"true", "correct", "yes", "1"}
+        return False
+
+    def _score_judge_sample(
+        self,
+        sample: DatBenchSample,
+        judge_by_id: Dict[str, JudgeResponse],
+    ) -> Dict[str, Any]:
+        """Score a judge-mode sample from its judge verdict."""
+        judge_response = judge_by_id.get(sample.id)
+        is_correct = bool(
+            judge_response and self._judge_response_is_correct(judge_response)
+        )
+        score_details = {"score": 1.0 if is_correct else 0.0}
+        scorer_sample = self._convert_sample_for_scorer(sample)
+        for key in ("answer_type", "question_type"):
+            if key in scorer_sample:
+                score_details[key] = scorer_sample[key]
+        score_details["judge_verdict"] = (
+            judge_response.verdict if judge_response else "missing"
+        )
+        return score_details
+
     def compute_metrics(
         self,
         vlm_responses: List[VLMResponse],
@@ -88,21 +132,25 @@ class DatBenchEvaluator:
             # Get dataset-specific scoring module
             scoring_module = DATASET_SCORING_MODULES.get(dataset_name)
 
-            if scoring_module and hasattr(scoring_module, 'score_sample'):
+            if sample.eval_mode == "judge":
+                score_details = self._score_judge_sample(sample, judge_by_id)
+
+            elif scoring_module and hasattr(scoring_module, 'score_sample'):
                 # Convert sample to format expected by scorer
                 scorer_sample = self._convert_sample_for_scorer(sample)
                 score_details = scoring_module.score_sample(scorer_sample, model_output)
 
-                # Extract binary correctness
-                is_correct = score_details.get('score', 0.0) >= 0.5
-
-                # Store detailed metrics for aggregation
-                detailed_metrics_by_dataset[dataset_name].append(score_details)
             else:
                 # Fallback: basic exact match
                 extracted = extract_final_answer(model_output)
                 is_correct = extracted.strip().lower() == sample.answer.strip().lower()
                 score_details = {'score': 1.0 if is_correct else 0.0}
+
+            # Extract binary correctness
+            is_correct = score_details.get('score', 0.0) >= 0.5
+
+            # Store detailed metrics for aggregation
+            detailed_metrics_by_dataset[dataset_name].append(score_details)
 
             sample_scores.append(SampleScore(
                 id=sample.id,
