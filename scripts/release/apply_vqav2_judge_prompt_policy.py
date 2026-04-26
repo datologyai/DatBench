@@ -17,8 +17,9 @@ import pyarrow.parquet as pq
 from huggingface_hub import HfApi, hf_hub_download
 
 from datbench.judge_policies.vqav2 import (
+    LEGACY_VQA_V2_POLICY_MARKERS,
     VQA_V2_JUDGE_POLICY_MARKER,
-    with_vqa_v2_final_answer_policy,
+    with_vqa_v2_semantic_judge_policy,
 )
 
 
@@ -60,6 +61,15 @@ def policy_present(prompt: object) -> bool:
     return isinstance(prompt, str) and POLICY_MARKER in prompt
 
 
+def any_vqa_v2_policy_marker_present(prompt: object) -> bool:
+    if not isinstance(prompt, str):
+        return False
+    return any(
+        marker in prompt
+        for marker in (POLICY_MARKER, *LEGACY_VQA_V2_POLICY_MARKERS)
+    )
+
+
 def require_field(table: pa.Table, field_name: str, path: Path) -> None:
     if table.schema.get_field_index(field_name) == -1:
         raise ValueError(f"{path} is missing required field {field_name!r}")
@@ -90,7 +100,7 @@ def rewrite_table(table: pa.Table, path: Path) -> tuple[pa.Table, dict[str, int]
         source_infos, eval_modes, old_prompts, strict=True
     ):
         if not is_vqa_v2_source(source_info):
-            non_target_policy_rows += int(policy_present(old_prompt))
+            non_target_policy_rows += int(any_vqa_v2_policy_marker_present(old_prompt))
             new_prompts.append(old_prompt)
             continue
 
@@ -102,7 +112,7 @@ def rewrite_table(table: pa.Table, path: Path) -> tuple[pa.Table, dict[str, int]
             )
 
         base_prompt = "" if old_prompt is None else str(old_prompt)
-        new_prompt = with_vqa_v2_final_answer_policy(base_prompt)
+        new_prompt = with_vqa_v2_semantic_judge_policy(base_prompt)
         changed_rows += int(new_prompt != old_prompt)
         target_policy_rows += int(policy_present(new_prompt))
         new_prompts.append(new_prompt)
@@ -147,6 +157,10 @@ def validate_rewrite(
         if old_prompt != new_prompt:
             raise ValueError(
                 f"{path} changed non-VQA-V2 judge_prompt at row {row_index}"
+            )
+        if any_vqa_v2_policy_marker_present(new_prompt):
+            raise ValueError(
+                f"{path} has VQA-V2 judge policy marker on non-target row {row_index}"
             )
 
 

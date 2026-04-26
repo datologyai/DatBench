@@ -110,10 +110,11 @@ class DatBenchEvaluator:
             judge_response and self._judge_response_is_correct(judge_response)
         )
         score_details = {"score": 1.0 if is_correct else 0.0}
-        scorer_sample = self._convert_sample_for_scorer(sample)
-        for key in ("answer_type", "question_type"):
-            if key in scorer_sample:
-                score_details[key] = scorer_sample[key]
+        if sample.source_info.get("dataset") == "vqa-v2":
+            metadata = self._optional_metadata_dict(sample)
+            for key in ("answer_type", "question_type"):
+                if key in metadata:
+                    score_details[key] = metadata[key]
         score_details["judge_verdict"] = (
             judge_response.verdict if judge_response else "missing"
         )
@@ -226,6 +227,20 @@ class DatBenchEvaluator:
             summary=summary,
             results=sample_scores
         )
+
+
+    @staticmethod
+    def _optional_metadata_dict(sample: DatBenchSample) -> Dict[str, Any]:
+        metadata_raw = sample.metadata if hasattr(sample, "metadata") else "{}"
+        if not isinstance(metadata_raw, str):
+            return metadata_raw or {}
+        try:
+            metadata = json.loads(metadata_raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(metadata, dict):
+            return metadata
+        return {}
 
 
     def _convert_sample_for_scorer(self, sample: DatBenchSample) -> Dict[str, Any]:

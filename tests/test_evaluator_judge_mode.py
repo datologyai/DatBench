@@ -1,11 +1,15 @@
+import pytest
+import pyarrow as pa
+
 from datbench import DatBenchEvaluator, JudgeResponse, VLMResponse
 from datbench.judge_policies.vqav2 import (
     LEGACY_VQA_V2_POLICY_MARKERS,
-    VQA_V2_JUDGE_FINAL_ANSWER_POLICY,
+    VQA_V2_SEMANTIC_JUDGE_POLICY,
     vqa_v2_judge_prompt_for_sample,
-    with_vqa_v2_final_answer_policy,
+    with_vqa_v2_semantic_judge_policy,
 )
 from datbench.schema import JudgeRequest
+from scripts.release.apply_vqav2_judge_prompt_policy import rewrite_table
 
 
 def _row(
@@ -130,7 +134,30 @@ def test_vqav2_direct_scorer_remains_available_for_unconverted_rows():
     assert report.results[0].metadata["score_details"]["answer_type"] == "other"
 
 
-def test_vqav2_policy_helper_adds_final_answer_policy():
+def test_non_vqav2_judge_scoring_does_not_require_dataset_scorer_metadata():
+    row = _row(
+        "judge-refcoco",
+        "refcoco_testA",
+        "box",
+        ["box"],
+        eval_mode="judge",
+        judge_prompt="Judge grounding correctness.",
+    )
+    evaluator = DatBenchEvaluator([row], "grounding")
+
+    report = evaluator.compute_metrics(
+        [VLMResponse(id="judge-refcoco", raw_output="box")],
+        judge_responses=[JudgeResponse(id="judge-refcoco", raw_judge_output="true")],
+    )
+
+    assert report.summary["overall_accuracy"] == 1.0
+    assert report.results[0].metadata["score_details"] == {
+        "score": 1.0,
+        "judge_verdict": None,
+    }
+
+
+def test_vqav2_policy_helper_adds_semantic_judge_policy():
     row = _row(
         "judge-vqa",
         "vqa-v2",
@@ -143,8 +170,8 @@ def test_vqav2_policy_helper_adds_final_answer_policy():
 
     judge_prompt = vqa_v2_judge_prompt_for_sample(sample)
 
-    assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY in judge_prompt
-    assert "seagull" in judge_prompt
+    assert VQA_V2_SEMANTIC_JUDGE_POLICY in judge_prompt
+    assert "Accept compatible refinements and hyponyms" in judge_prompt
 
 
 def test_judge_request_uses_row_prompt_without_source_specific_mutation():
@@ -154,7 +181,7 @@ def test_judge_request_uses_row_prompt_without_source_specific_mutation():
         "none",
         ["none", "nothing"],
         eval_mode="judge",
-        judge_prompt=with_vqa_v2_final_answer_policy(
+        judge_prompt=with_vqa_v2_semantic_judge_policy(
             "Judge semantic VQA correctness."
         ),
     )
@@ -165,7 +192,7 @@ def test_judge_request_uses_row_prompt_without_source_specific_mutation():
         VLMResponse(id="judge-vqa", raw_output="\\boxed{None}"),
     )
 
-    assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY in request.judge_prompt
+    assert VQA_V2_SEMANTIC_JUDGE_POLICY in request.judge_prompt
     assert request.judge_prompt == sample.judge_prompt
 
 
@@ -176,7 +203,7 @@ def test_vqav2_policy_helper_replaces_legacy_policy():
         "- Keep the semantic comparison strict for answer content."
     )
 
-    judge_prompt = with_vqa_v2_final_answer_policy(legacy_prompt)
+    judge_prompt = with_vqa_v2_semantic_judge_policy(legacy_prompt)
 
     assert "Judge semantic VQA correctness." in judge_prompt
     assert LEGACY_VQA_V2_POLICY_MARKERS[0] not in judge_prompt
@@ -196,5 +223,44 @@ def test_non_vqav2_policy_helper_does_not_add_vqa_policy():
 
     judge_prompt = vqa_v2_judge_prompt_for_sample(sample)
 
-    assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY not in judge_prompt
+    assert VQA_V2_SEMANTIC_JUDGE_POLICY not in judge_prompt
     assert judge_prompt == "Judge chart correctness."
+
+
+def test_release_rewrite_rejects_vqa_policy_on_non_target_rows():
+    table = pa.table(
+        {
+            "id": ["chart-row"],
+            "source_info": [{"dataset": "chartqa"}],
+            "eval_mode": ["judge"],
+            "judge_prompt": [
+                f"Judge chart correctness.\n\n{LEGACY_VQA_V2_POLICY_MARKERS[0]}"
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="non-target row"):
+        rewrite_table(table, path="memory.parquet")
+
+
+def test_release_rewrite_updates_only_target_vqav2_rows():
+    table = pa.table(
+        {
+            "id": ["vqa-row", "chart-row"],
+            "source_info": [
+                {"dataset": "vqa-v2"},
+                {"dataset": "chartqa"},
+            ],
+            "eval_mode": ["judge", "judge"],
+            "judge_prompt": ["Judge VQA correctness.", "Judge chart correctness."],
+        }
+    )
+
+    rewritten, counts = rewrite_table(table, path="memory.parquet")
+    prompts = rewritten["judge_prompt"].to_pylist()
+
+    assert counts["target_rows"] == 1
+    assert counts["target_policy_rows"] == 1
+    assert counts["non_target_policy_rows"] == 0
+    assert VQA_V2_SEMANTIC_JUDGE_POLICY in prompts[0]
+    assert prompts[1] == "Judge chart correctness."

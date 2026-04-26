@@ -9,7 +9,7 @@ LEGACY_VQA_V2_POLICY_MARKERS = (
     "Final-answer extraction policy for VQA-V2 semantic judging",
 )
 
-VQA_V2_JUDGE_FINAL_ANSWER_POLICY = r"""
+VQA_V2_SEMANTIC_JUDGE_POLICY = r"""
 
 VQA-V2 semantic judge policy v2:
 - Judge the model's final answer content, not wrapper syntax.
@@ -45,15 +45,15 @@ def is_vqa_v2_source(sample: DatBenchSample) -> bool:
     return sample.source_info.get("dataset") == "vqa-v2"
 
 
-def with_vqa_v2_final_answer_policy(judge_prompt: str) -> str:
+def with_vqa_v2_semantic_judge_policy(judge_prompt: str) -> str:
     base_prompt = _strip_existing_vqa_v2_policy(judge_prompt)
     if not base_prompt:
-        return VQA_V2_JUDGE_FINAL_ANSWER_POLICY
-    return f"{base_prompt}\n\n{VQA_V2_JUDGE_FINAL_ANSWER_POLICY}".strip()
+        return VQA_V2_SEMANTIC_JUDGE_POLICY
+    return f"{base_prompt}\n\n{VQA_V2_SEMANTIC_JUDGE_POLICY}".strip()
 
 
 def vqa_v2_judge_prompt_for_sample(sample: DatBenchSample) -> str:
     judge_prompt = sample.judge_prompt or ""
     if not is_vqa_v2_source(sample):
         return judge_prompt
-    return with_vqa_v2_final_answer_policy(judge_prompt)
+    return with_vqa_v2_semantic_judge_policy(judge_prompt)
