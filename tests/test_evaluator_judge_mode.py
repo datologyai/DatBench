@@ -1,5 +1,6 @@
 from datbench import DatBenchEvaluator, JudgeResponse, VLMResponse
 from datbench.judge_policies.vqav2 import (
+    LEGACY_VQA_V2_POLICY_MARKERS,
     VQA_V2_JUDGE_FINAL_ANSWER_POLICY,
     vqa_v2_judge_prompt_for_sample,
     with_vqa_v2_final_answer_policy,
@@ -143,7 +144,7 @@ def test_vqav2_policy_helper_adds_final_answer_policy():
     judge_prompt = vqa_v2_judge_prompt_for_sample(sample)
 
     assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY in judge_prompt
-    assert "\\boxed{...}" in judge_prompt
+    assert "seagull" in judge_prompt
 
 
 def test_judge_request_uses_row_prompt_without_source_specific_mutation():
@@ -166,6 +167,20 @@ def test_judge_request_uses_row_prompt_without_source_specific_mutation():
 
     assert VQA_V2_JUDGE_FINAL_ANSWER_POLICY in request.judge_prompt
     assert request.judge_prompt == sample.judge_prompt
+
+
+def test_vqav2_policy_helper_replaces_legacy_policy():
+    legacy_prompt = (
+        "Judge semantic VQA correctness.\n\n"
+        f"{LEGACY_VQA_V2_POLICY_MARKERS[0]}:\n"
+        "- Keep the semantic comparison strict for answer content."
+    )
+
+    judge_prompt = with_vqa_v2_final_answer_policy(legacy_prompt)
+
+    assert "Judge semantic VQA correctness." in judge_prompt
+    assert LEGACY_VQA_V2_POLICY_MARKERS[0] not in judge_prompt
+    assert "Accept compatible refinements and hyponyms" in judge_prompt
 
 
 def test_non_vqav2_policy_helper_does_not_add_vqa_policy():

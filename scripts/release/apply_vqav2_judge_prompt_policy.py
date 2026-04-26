@@ -16,12 +16,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import HfApi, hf_hub_download
 
-from datbench.judge_policies.vqav2 import with_vqa_v2_final_answer_policy
+from datbench.judge_policies.vqav2 import (
+    VQA_V2_JUDGE_POLICY_MARKER,
+    with_vqa_v2_final_answer_policy,
+)
 
 
-POLICY_MARKER = "Final-answer extraction policy for VQA-V2 semantic judging"
+POLICY_MARKER = VQA_V2_JUDGE_POLICY_MARKER
 DEFAULT_COMMIT_MESSAGE = (
-    "Add final-answer policy to DatBench General VQA-V2 judge prompts"
+    "Update DatBench General VQA-V2 semantic judge prompt policy"
 )
 
 
