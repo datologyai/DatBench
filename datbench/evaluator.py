@@ -106,18 +106,16 @@ class DatBenchEvaluator:
     ) -> Dict[str, Any]:
         """Score a judge-mode sample from its judge verdict."""
         judge_response = judge_by_id.get(sample.id)
-        is_correct = bool(
-            judge_response and self._judge_response_is_correct(judge_response)
-        )
+        if judge_response is None:
+            raise ValueError(f"Missing judge response for judge-mode sample {sample.id}")
+        is_correct = self._judge_response_is_correct(judge_response)
         score_details = {"score": 1.0 if is_correct else 0.0}
         if sample.source_info.get("dataset") == "vqa-v2":
             metadata = self._optional_metadata_dict(sample)
             for key in ("answer_type", "question_type"):
                 if key in metadata:
                     score_details[key] = metadata[key]
-        score_details["judge_verdict"] = (
-            judge_response.verdict if judge_response else "missing"
-        )
+        score_details["judge_verdict"] = judge_response.verdict
         return score_details
 
     def compute_metrics(

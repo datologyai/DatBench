@@ -90,9 +90,11 @@ def rewrite_table(table: pa.Table, path: Path) -> tuple[pa.Table, dict[str, int]
     eval_modes = table["eval_mode"].to_pylist()
     old_prompts = table["judge_prompt"].to_pylist()
 
+    new_eval_modes: list[object] = []
     new_prompts: list[object] = []
     target_rows = 0
     changed_rows = 0
+    converted_eval_mode_rows = 0
     target_policy_rows = 0
     non_target_policy_rows = 0
 
@@ -101,29 +103,29 @@ def rewrite_table(table: pa.Table, path: Path) -> tuple[pa.Table, dict[str, int]
     ):
         if not is_vqa_v2_source(source_info):
             non_target_policy_rows += int(any_vqa_v2_policy_marker_present(old_prompt))
+            new_eval_modes.append(eval_mode)
             new_prompts.append(old_prompt)
             continue
 
         target_rows += 1
-        if eval_mode != "judge":
-            raise ValueError(
-                f"{path} has VQA-V2 target row with eval_mode={eval_mode!r}; "
-                "expected 'judge'"
-            )
-
+        new_eval_mode = "judge"
         base_prompt = "" if old_prompt is None else str(old_prompt)
         new_prompt = with_vqa_v2_semantic_judge_policy(base_prompt)
-        changed_rows += int(new_prompt != old_prompt)
+        converted_eval_mode_rows += int(eval_mode != new_eval_mode)
+        changed_rows += int(new_prompt != old_prompt or eval_mode != new_eval_mode)
         target_policy_rows += int(policy_present(new_prompt))
+        new_eval_modes.append(new_eval_mode)
         new_prompts.append(new_prompt)
 
-    rewritten = replace_column(table, "judge_prompt", new_prompts)
+    rewritten = replace_column(table, "eval_mode", new_eval_modes)
+    rewritten = replace_column(rewritten, "judge_prompt", new_prompts)
     validate_rewrite(table, rewritten, path, source_infos)
 
     return rewritten, {
         "rows": table.num_rows,
         "target_rows": target_rows,
         "changed_rows": changed_rows,
+        "converted_eval_mode_rows": converted_eval_mode_rows,
         "target_policy_rows": target_policy_rows,
         "non_target_policy_rows": non_target_policy_rows,
     }
@@ -140,20 +142,42 @@ def validate_rewrite(
     if old_table.schema != new_table.schema:
         raise ValueError(f"{path} schema changed")
 
-    judge_prompt_index = old_table.schema.get_field_index("judge_prompt")
+    allowed_target_fields = {"eval_mode", "judge_prompt"}
     for index, field in enumerate(old_table.schema):
-        if index == judge_prompt_index:
+        if field.name in allowed_target_fields:
             continue
         if not old_table.column(index).equals(new_table.column(index)):
             raise ValueError(f"{path} changed non-target field {field.name!r}")
 
+    old_eval_modes = old_table["eval_mode"].to_pylist()
+    new_eval_modes = new_table["eval_mode"].to_pylist()
     old_prompts = old_table["judge_prompt"].to_pylist()
     new_prompts = new_table["judge_prompt"].to_pylist()
-    for row_index, (source_info, old_prompt, new_prompt) in enumerate(
-        zip(source_infos, old_prompts, new_prompts, strict=True)
-    ):
+    rows = zip(
+        source_infos,
+        old_eval_modes,
+        new_eval_modes,
+        old_prompts,
+        new_prompts,
+        strict=True,
+    )
+    for row_index, (
+        source_info,
+        old_eval_mode,
+        new_eval_mode,
+        old_prompt,
+        new_prompt,
+    ) in enumerate(rows):
         if is_vqa_v2_source(source_info):
+            if new_eval_mode != "judge":
+                raise ValueError(
+                    f"{path} did not convert VQA-V2 row {row_index} to judge mode"
+                )
             continue
+        if old_eval_mode != new_eval_mode:
+            raise ValueError(
+                f"{path} changed non-VQA-V2 eval_mode at row {row_index}"
+            )
         if old_prompt != new_prompt:
             raise ValueError(
                 f"{path} changed non-VQA-V2 judge_prompt at row {row_index}"
@@ -185,6 +209,7 @@ def empty_counts() -> dict[str, int]:
         "rows": 0,
         "target_rows": 0,
         "changed_rows": 0,
+        "converted_eval_mode_rows": 0,
         "target_policy_rows": 0,
         "non_target_policy_rows": 0,
     }

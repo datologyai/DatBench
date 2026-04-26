@@ -118,6 +118,21 @@ def test_malformed_raw_judge_output_scores_incorrect():
     assert report.results[0].score == 0.0
 
 
+def test_missing_judge_response_fails_loudly():
+    row = _row(
+        "judge-vqa",
+        "vqa-v2",
+        "dog",
+        ["dog", "dog", "puppy"],
+        eval_mode="judge",
+        judge_prompt="Judge it.",
+    )
+    evaluator = DatBenchEvaluator([row], "general")
+
+    with pytest.raises(ValueError, match="Missing judge response"):
+        evaluator.compute_metrics([VLMResponse(id="judge-vqa", raw_output="puppy")])
+
+
 def test_vqav2_direct_scorer_remains_available_for_unconverted_rows():
     row = _row(
         "direct-vqa",
@@ -251,16 +266,19 @@ def test_release_rewrite_updates_only_target_vqav2_rows():
                 {"dataset": "vqa-v2"},
                 {"dataset": "chartqa"},
             ],
-            "eval_mode": ["judge", "judge"],
+            "eval_mode": ["direct", "judge"],
             "judge_prompt": ["Judge VQA correctness.", "Judge chart correctness."],
         }
     )
 
     rewritten, counts = rewrite_table(table, path="memory.parquet")
+    eval_modes = rewritten["eval_mode"].to_pylist()
     prompts = rewritten["judge_prompt"].to_pylist()
 
     assert counts["target_rows"] == 1
+    assert counts["converted_eval_mode_rows"] == 1
     assert counts["target_policy_rows"] == 1
     assert counts["non_target_policy_rows"] == 0
+    assert eval_modes == ["judge", "judge"]
     assert VQA_V2_SEMANTIC_JUDGE_POLICY in prompts[0]
     assert prompts[1] == "Judge chart correctness."
