@@ -1,7 +1,7 @@
 """DatBench evaluation harness."""
 
 import json
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from collections import defaultdict
 
 from .schema import (
@@ -15,6 +15,19 @@ from .schema import (
 )
 from .datasets_scoring import DATASET_SCORING_MODULES
 from .datasets_scoring.evaluation_utils.erma_utils import extract_final_answer
+
+
+COMMON_MCQ_METADATA_FIELDS = ("options", "index2ans", "all_choices")
+
+
+def _copy_metadata_fields(
+    scorer_sample: Dict[str, Any],
+    metadata: Dict[str, Any],
+    fields: Tuple[str, ...],
+) -> None:
+    for field in fields:
+        if field in metadata:
+            scorer_sample[field] = metadata[field]
 
 
 class DatBenchEvaluator:
@@ -192,6 +205,7 @@ class DatBenchEvaluator:
             "answer": sample.answer,
             "all_answers": sample.all_answers,
         }
+        _copy_metadata_fields(scorer_sample, metadata, COMMON_MCQ_METADATA_FIELDS)
 
         # Dataset-specific metadata extraction
 
@@ -250,14 +264,6 @@ class DatBenchEvaluator:
                 scorer_sample["content"] = metadata["content"]
             scorer_sample["answers"] = sample.all_answers
             scorer_sample["question"] = sample.question
-
-        elif dataset_name == 'mmbench':
-            if 'options' in metadata:
-                scorer_sample["options"] = metadata["options"]
-            if 'index2ans' in metadata:
-                scorer_sample["index2ans"] = metadata["index2ans"]
-            if 'all_choices' in metadata:
-                scorer_sample["all_choices"] = metadata["all_choices"]
 
         elif dataset_name == 'chartqapro':
             if 'question_type' in metadata:
