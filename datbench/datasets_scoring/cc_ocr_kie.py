@@ -69,6 +69,10 @@ def _extract_json(text: str) -> Dict[str, Any]:
                     if brace_count == 0:
                         text = text[start_idx:i].strip()
                         break
+            # Models often merge the boxed braces with the JSON braces
+            # (\boxed{"k": "v"}), leaving a brace-less body — restore it.
+            if boxed_start != -1 and text and not text.startswith('{'):
+                text = '{' + text + '}'
 
     # Remove markdown code blocks
     text = re.sub(r'```json\s*', '', text, flags=re.IGNORECASE)
