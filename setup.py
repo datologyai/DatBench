@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 setup(
     name="datbench",
-    version="1.0.0",
+    version="1.0.1",
     author="Datology AI",
     description="Official evaluation harness for DatBench vision-language benchmarks",
     long_description=long_description,
