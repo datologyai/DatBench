@@ -875,7 +875,7 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
             cn_relationship_extraction_list.append(score)
 
         elif task_type in ["document parsing cn", "table parsing cn", "formula recognition cn"]:
-            en_element_parsing_list.append(score)
+            cn_element_parsing_list.append(score)
 
         elif task_type == "cognition VQA cn":
             cn_visual_text_understanding_list.append(score)

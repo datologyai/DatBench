@@ -26,5 +26,9 @@ setup(
         "latex2sympy2>=1.9.0",  # For MathVision LaTeX evaluation
         "lxml>=4.9.0",  # For HTML table parsing
         "zss>=1.2.0",  # For tree edit distance (nTED)
+        "nltk>=3.9.1",  # For BLEU/METEOR/F-measure (OCRBench v2 full-page OCR; METEOR also needs the nltk "wordnet" corpus)
+        "jieba>=0.42.1",  # For Chinese word segmentation (OCRBench v2 full-page OCR cn)
+        "Distance>=0.1.3",  # For TEDS table structure evaluation (OCRBench v2 table parsing)
+        "tqdm>=4.0.0",  # For VQAv2 evaluation progress reporting
     ],
 )
