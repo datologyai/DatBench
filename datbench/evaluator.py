@@ -461,10 +461,32 @@ class DatBenchEvaluator:
             if 'correct_choice_letter' in metadata:
                 scorer_sample["correct_choice_letter"] = metadata["correct_choice_letter"]
 
+        elif dataset_name == 'mathvista':
+            # The scorer selects its multiple-choice letter parser from question_type
+            # and resolves letters through choices/all_choices.
+            if 'question_type' in metadata:
+                scorer_sample["question_type"] = metadata["question_type"]
+            if 'choices' in metadata:
+                scorer_sample["choices"] = metadata["choices"]
+            if 'all_choices' in metadata:
+                # all_choices is null on free-form rows; the scorer expects a list.
+                scorer_sample["all_choices"] = metadata["all_choices"] or []
+
         elif dataset_name == 'logicvista':
             scorer_sample["question"] = sample.question
             if 'options' in metadata:
                 scorer_sample["options"] = metadata["options"]
+
+        elif dataset_name == 'realworldqa':
+            # The question text carries no option lines, so the scorer maps
+            # "B. <option text>" style outputs to a letter only via answer_choices.
+            if 'answer_choices' in metadata:
+                scorer_sample["answer_choices"] = metadata["answer_choices"]
+
+        elif dataset_name == 'infovqa':
+            # The scorer reads the gold answers from "answers" and takes the
+            # maximum ANLS over all of them.
+            scorer_sample["answers"] = sample.all_answers
 
         elif dataset_name in ['cc-ocr-doc_parsing', 'cc-ocr-kie', 'cc-ocr-multi_scene_ocr']:
             if 'l2_category' in metadata:
