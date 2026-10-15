@@ -12,9 +12,9 @@ from .schema import (
     SampleScore,
     DatBenchReport,
 )
-from .evaluator import DatBenchEvaluator
+from .evaluator import DatBenchEvaluator, parse_judge_verdict
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 __all__ = [
     "DatBenchSample",
@@ -25,4 +25,5 @@ __all__ = [
     "SampleScore",
     "DatBenchReport",
     "DatBenchEvaluator",
+    "parse_judge_verdict",
 ]

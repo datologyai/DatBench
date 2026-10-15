@@ -21,8 +21,8 @@ class DatBenchSample:
     prompt_format: Dict[str, str]
     answer: str
     all_answers: List[str] = field(default_factory=list)
-    eval_mode: str = "direct"  # 'direct' or 'judge'
-    judge_prompt: str = ""
+    eval_mode: str = "direct"  # 'direct': dataset scorer; 'judge': scored from the judge verdict
+    judge_prompt: str = ""  # Rubric for the judge (judge-mode samples)
     is_circular: bool = False
     metadata: str = "{}"  # JSON string with dataset-specific metadata
     source_info: Dict[str, str] = field(default_factory=dict)
@@ -133,7 +133,18 @@ class JudgeRequest:
 
 @dataclass
 class JudgeResponse:
-    """Judge model output for a single sample."""
+    """Judge model output for a single sample.
+
+    Attributes:
+        id: Sample identifier (matches the JudgeRequest / DatBenchSample id)
+        raw_judge_output: The judge model's text. It is parsed when ``verdict`` is not
+            set: JSON ``{"answer": true|false}`` (or ``"yes"|"no"|"correct"|"incorrect"``),
+            an ``answer: true|false`` line, or a bare true/false/yes/no/correct/incorrect
+            token, case-insensitive. Anything else is 'unparsed' and scores 0.0.
+        verdict: Optional label if you parse the judge output yourself: 'correct' or
+            'incorrect' (true/false and yes/no are also accepted). It takes precedence
+            over ``raw_judge_output``; an unrecognized value falls back to the raw text.
+    """
     id: str
     raw_judge_output: str
     verdict: Optional[str] = None
@@ -141,7 +152,13 @@ class JudgeResponse:
 
 @dataclass
 class SampleScore:
-    """Per-sample evaluation result."""
+    """Per-sample evaluation result.
+
+    ``metadata['score_details']`` holds the scorer output for direct-mode samples. For
+    judge-mode samples it holds: score (1.0/0.0), eval_mode ('judge'), match (bool),
+    judge_verdict ('correct', 'incorrect', 'missing' or 'unparsed'), judge_raw_output
+    and judge_missing_response (True when no JudgeResponse was given for the sample).
+    """
     id: str
     score: float
     vlm_output: str
