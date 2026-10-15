@@ -8,6 +8,12 @@ from .evaluation_utils.erma_utils import extract_final_answer
 def score_sample(sample: Dict[str, Any], model_output: str) -> Dict[str, Any]:
     """Score a single DocVQA sample using ANLS.
 
+    The per-sample ``score`` is ANLS (Average Normalized Levenshtein
+    Similarity) as in the official evaluation script: lowercase + whitespace
+    normalization, max over gold answers, and a similarity of exactly 0.5 is
+    kept (only distance > 0.5 is 0). The unthresholded similarity is returned
+    under ``anls``.
+
     Args:
         sample: Sample data with 'answer' and optionally 'all_answers'
         model_output: Model's generated output
@@ -32,24 +38,26 @@ def score_sample(sample: Dict[str, Any], model_output: str) -> Dict[str, Any]:
     pred_answer = extract_final_answer(model_output)
 
     # Compute ANLS variants:
+    # - official ANLS (0 when normalized distance > 0.5; exactly 0.5 is kept)
     # - raw/continuous similarity (no threshold)
-    # - thresholded ANLS@0.5 (standard ANLS clipping)
-    # - binary threshold@0.5 accuracy (new explicit metric)
+    # - thresholded ANLS@0.5 derived from the raw similarity
+    # - binary threshold@0.5 accuracy
     pred_norm = _normalize_answer(pred_answer)
+    anls = 0.0
     anls_raw = 0.0
-    if all_ground_truth_answers:
-        for gt_answer in all_ground_truth_answers:
-            gt_norm = _normalize_answer(gt_answer)
-            score = _compute_anls_raw(pred_norm, gt_norm)
-            if score > anls_raw:
-                anls_raw = score
+    for gt_answer in all_ground_truth_answers:
+        gt_norm = _normalize_answer(gt_answer)
+        anls = max(anls, _compute_anls(pred_norm, gt_norm))
+        anls_raw = max(anls_raw, _compute_anls_raw(pred_norm, gt_norm))
     anls_thresholded = _apply_anls_threshold(anls_raw)
     threshold_0_5_accuracy = _threshold_at_0_5(anls_raw)
 
     return {
-        # Keep score as continuous metric so aggregate accuracy captures
-        # partial-correctness instead of hard-thresholding.
-        "score": anls_raw,
+        # The official ANLS is the per-sample score so that aggregate accuracy
+        # matches the benchmark's definition.
+        "score": anls,
+        # Continuous similarity without the threshold, kept for
+        # partial-correctness analysis.
         "anls": anls_raw,
         "anls_thresholded_0_5": anls_thresholded,
         "threshold_0_5_accuracy": threshold_0_5_accuracy,
@@ -67,8 +75,11 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
         results: List of score_details dicts from score_sample
 
     Returns:
-        Dictionary with accuracy__DocVQA-ANLS and accuracy__DocVQA-ExactMatch
+        Dictionary with accuracy__DocVQA-ANLS (official, thresholded ANLS),
+        accuracy__DocVQA-ANLS-raw (unthresholded similarity) and
+        accuracy__DocVQA-ExactMatch
     """
+    anls_scores = []
     anls_raw_scores = []
     anls_thresholded_scores = []
     threshold_0_5_scores = []
@@ -77,7 +88,8 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
     for result in results:
         score_details = result.get("score_details", result)
 
-        # ANLS score
+        # ANLS scores
+        anls_scores.append(score_details.get("score", 0.0))
         anls_raw_scores.append(score_details.get("anls", score_details.get("score", 0.0)))
         anls_thresholded_scores.append(score_details.get("anls_thresholded_0_5", 0.0))
         threshold_0_5_scores.append(score_details.get("threshold_0_5_accuracy", 0.0))
@@ -95,6 +107,7 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
                 break
         exact_matches.append(1.0 if exact_match else 0.0)
 
+    anls_avg = sum(anls_scores) / len(anls_scores) if anls_scores else 0.0
     anls_raw_avg = sum(anls_raw_scores) / len(anls_raw_scores) if anls_raw_scores else 0.0
     anls_thresholded_avg = (
         sum(anls_thresholded_scores) / len(anls_thresholded_scores)
@@ -109,7 +122,8 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
     exact_match_avg = sum(exact_matches) / len(exact_matches) if exact_matches else 0.0
 
     return {
-        "accuracy__DocVQA-ANLS": anls_raw_avg,
+        "accuracy__DocVQA-ANLS": anls_avg,
+        "accuracy__DocVQA-ANLS-raw": anls_raw_avg,
         "accuracy__DocVQA-ANLS-thresholded-0.5": anls_thresholded_avg,
         "accuracy__DocVQA-threshold@0.5": threshold_0_5_avg,
         "accuracy__DocVQA-ExactMatch": exact_match_avg,
@@ -119,21 +133,62 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
 # Helper functions
 
 def _normalize_answer(answer: str) -> str:
-    """Normalize answer for exact matching."""
+    """Lowercase and collapse whitespace (used by ANLS scoring and exact match)."""
     if not answer:
         return ""
     return " ".join(answer.strip().lower().split())
 
 
+def _compute_anls(prediction: str, ground_truth: str) -> float:
+    """
+    Compute Average Normalized Levenshtein Similarity (ANLS).
+
+    ANLS = 1 - (Levenshtein Distance / max uppercase string length).
+    Edit distance is computed on the lowercase, whitespace-normalized strings.
+
+    If the normalized Levenshtein distance is > 0.5, ANLS = 0.
+
+    Known small difference from the official script: both upper-case the
+    strings for the denominator, but the official script measures the raw
+    strings while this implementation measures the lowercase,
+    whitespace-normalized ones, so a gold answer with leading or doubled
+    whitespace scores slightly higher there.
+    """
+    if not prediction and not ground_truth:
+        return 1.0
+
+    if not prediction or not ground_truth:
+        return 0.0
+
+    # Compute Levenshtein distance
+    lev_dist = _levenshtein_distance(prediction, ground_truth)
+
+    # Preserve the ANLS package's denominator, including Unicode expansions
+    # such as ß -> SS, while keeping edit distance on lowercase strings.
+    max_len = max(len(prediction.upper()), len(ground_truth.upper()))
+    normalized_dist = lev_dist / max_len
+
+    # If normalized distance > 0.5, return 0
+    if normalized_dist > 0.5:
+        return 0.0
+
+    # Otherwise return 1 - normalized_dist
+    return 1.0 - normalized_dist
+
+
 def _compute_anls_raw(prediction: str, ground_truth: str) -> float:
-    """Compute raw ANLS similarity without threshold clipping."""
+    """Compute raw ANLS similarity without threshold clipping.
+
+    Uses the same upper-cased length denominator as `_compute_anls` so the raw
+    and thresholded values agree wherever the threshold does not apply.
+    """
     if not prediction and not ground_truth:
         return 1.0
     if not prediction or not ground_truth:
         return 0.0
 
     lev_dist = _levenshtein_distance(prediction, ground_truth)
-    max_len = max(len(prediction), len(ground_truth))
+    max_len = max(len(prediction.upper()), len(ground_truth.upper()))
     normalized_dist = lev_dist / max_len
 
     return 1.0 - normalized_dist

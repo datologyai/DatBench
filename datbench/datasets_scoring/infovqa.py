@@ -7,8 +7,9 @@ from .evaluation_utils.erma_utils import extract_final_answer
 def score_sample(sample: Dict[str, Any], model_output: str) -> Dict[str, Any]:
     """Score a single InfoVQA sample.
 
-    Uses ANLS (Average Normalized Levenshtein Similarity) scoring.
-    Falls back to custom implementation if anls package is not available.
+    Uses ANLS (Average Normalized Levenshtein Similarity) as in the official
+    evaluation script: lowercase + whitespace normalization, max over gold
+    answers, and a similarity of exactly 0.5 is kept (only distance > 0.5 is 0).
 
     Args:
         sample: Original sample data
@@ -33,28 +34,14 @@ def score_sample(sample: Dict[str, Any], model_output: str) -> Dict[str, Any]:
     # Extract concise answer before scoring
     pred_answer = extract_final_answer(model_output)
 
+    # Scored in-repo, not with the PyPI `anls` package: that package scores a
+    # similarity of exactly 0.5 as 0, while the official script keeps it.
+    det = _normalize_answer(pred_answer)
     anls_score_val = 0.0
-    if all_ground_truth_answers:
-        try:
-            from anls import anls_score
-
-            # Use official ANLS package
-            anls_score_val = anls_score(
-                prediction=pred_answer,
-                gold_labels=all_ground_truth_answers,
-                threshold=0.5,
-            )
-        except ImportError:
-            # Fall back to spec-aligned implementation: lowercase + whitespace normalize only
-            def norm_ws(s: str) -> str:
-                s = (s or "").strip().lower()
-                return " ".join(s.split())
-
-            det = norm_ws(pred_answer)
-            for gt_answer in all_ground_truth_answers:
-                gt = norm_ws(gt_answer)
-                score = _compute_anls(det, gt)
-                anls_score_val = max(anls_score_val, score)
+    for gt_answer in all_ground_truth_answers:
+        gt = _normalize_answer(gt_answer)
+        score = _compute_anls(det, gt)
+        anls_score_val = max(anls_score_val, score)
 
     return {
         "score": anls_score_val,
@@ -67,7 +54,7 @@ def score_sample(sample: Dict[str, Any], model_output: str) -> Dict[str, Any]:
 
 
 def _normalize_answer(answer: str) -> str:
-    """Deprecated: kept for compatibility. Use whitespace normalization in fallback ANLS instead."""
+    """Lowercase and collapse whitespace (used by ANLS scoring and exact match)."""
     if not answer:
         return ""
     return " ".join(answer.strip().lower().split())
@@ -77,9 +64,16 @@ def _compute_anls(prediction: str, ground_truth: str) -> float:
     """
     Compute Average Normalized Levenshtein Similarity (ANLS).
 
-    ANLS = 1 - (Levenshtein Distance / max(len(prediction), len(ground_truth)))
+    ANLS = 1 - (Levenshtein Distance / max uppercase string length).
+    Edit distance is computed on the lowercase, whitespace-normalized strings.
 
     If the normalized Levenshtein distance is > 0.5, ANLS = 0.
+
+    Known small difference from the official script: both upper-case the
+    strings for the denominator, but the official script measures the raw
+    strings while this implementation measures the lowercase,
+    whitespace-normalized ones, so a gold answer with leading or doubled
+    whitespace scores slightly higher there.
     """
     if not prediction and not ground_truth:
         return 1.0
@@ -90,8 +84,9 @@ def _compute_anls(prediction: str, ground_truth: str) -> float:
     # Compute Levenshtein distance
     lev_dist = _levenshtein_distance(prediction, ground_truth)
 
-    # Normalize by max length
-    max_len = max(len(prediction), len(ground_truth))
+    # Preserve the ANLS package's denominator, including Unicode expansions
+    # such as ß -> SS, while keeping edit distance on lowercase strings.
+    max_len = max(len(prediction.upper()), len(ground_truth.upper()))
     normalized_dist = lev_dist / max_len
 
     # If normalized distance > 0.5, return 0
