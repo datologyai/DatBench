@@ -1,8 +1,8 @@
 """Utilities for extracting concise answers from ERMA or CoT outputs.
 
-This aims to reliably pull the final short answer for scoring, preferring the
-explicit "ANSWER: ..." section when present, and falling back to common CoT
-markers or the last short non-empty line.
+This aims to reliably pull the final short answer for scoring, preferring
+complete boxed answers, then explicit "ANSWER: ..." sections, and falling back
+to the last short non-empty line.
 """
 
 from __future__ import annotations
@@ -11,8 +11,33 @@ import re
 from typing import Optional
 
 _ANSWER_LINE_RE = re.compile(r"(?im)^\s*(?:final\s+answer|answer)\s*:\s*(.+)$")
-_BOXED_RE = re.compile(r"\\+boxed\{([^}]+)\}")
+_BOXED_START_RE = re.compile(r"\\+boxed\{")
 _PIPE_BOX_RE = re.compile(r"<\|begin_of_box\|>(.*?)<\|end_of_box\|>", re.DOTALL)
+
+
+def _extract_last_boxed_answer(text: str) -> Optional[str]:
+    """Return the last complete, nonempty box, preserving nested LaTeX groups."""
+    for match in reversed(list(_BOXED_START_RE.finditer(text))):
+        start = match.end()
+        depth = 1
+        escaped = False
+        for pos in range(start, len(text)):
+            char = text[pos]
+            if char == "\\":
+                escaped = not escaped
+                continue
+            if escaped:
+                escaped = False
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+            if depth == 0:
+                if pos > start:
+                    return text[start:pos]
+                break
+    return None
 
 
 def _unwrap_known_tags(ans: str) -> str:
@@ -90,13 +115,10 @@ def extract_final_answer(text: str) -> str:
         ans = _clean(last_pipe_box.group(1))
         return ans
 
-    # Then check for standard \boxed{...} format
-    boxed_matches = list(_BOXED_RE.finditer(text))
-    if boxed_matches:
-        # Use the last occurrence (most likely the final answer)
-        last_boxed = boxed_matches[-1]
-        ans = _clean(last_boxed.group(1))
-        return ans
+    # Then check for the last complete standard \boxed{...} answer.
+    boxed_answer = _extract_last_boxed_answer(text)
+    if boxed_answer is not None:
+        return _clean(boxed_answer)
 
     # Priority 2: Prefer explicit ANSWER: line (last occurrence)
     last_match: Optional[re.Match] = None
