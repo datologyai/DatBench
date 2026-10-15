@@ -706,9 +706,179 @@ def _vqa_with_position_evaluation(predict: str, sample: Dict[str, Any]) -> float
 
 
 def _text_spotting_evaluation(predict: str, sample: Dict[str, Any]) -> float:
-    """Text spotting - simplified to VQA."""
-    answers = sample.get("answers", [])
-    return _vqa_evaluation(predict, answers)
+    """Evaluate text spotting with the official IoU/text h-mean semantics.
+
+    OCRBench v2's reference script shells out through the RRC zip-file
+    interface. This is its single-image equivalent: axis-align the reference
+    polygons, ignore ``###`` regions, greedily match boxes at IoU > 0.5, and
+    return recognition precision/recall h-mean.
+    """
+    pred_bboxes = _extract_bounding_boxes_robust(predict)
+    gt_bboxes = sample.get("bbox_list") or sample.get("bbox")
+    gt_content = sample.get("content")
+    if not pred_bboxes or not gt_bboxes or not gt_content:
+        return 0.0
+    if len(gt_bboxes) != len(gt_content):
+        return 0.0
+
+    ground_truth = []
+    for gt_bbox, gt_text in zip(gt_bboxes, gt_content):
+        try:
+            x_coords = gt_bbox[0::2]
+            y_coords = gt_bbox[1::2]
+            gt_box = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
+        except (TypeError, ValueError):
+            continue
+        ground_truth.append((gt_box, str(gt_text)))
+
+    predictions = [
+        (item[:4], str(item[4]))
+        for item in pred_bboxes
+        if len(item) >= 5 and item[0] < item[2] and item[1] < item[3]
+    ]
+    if not predictions or not ground_truth:
+        return 0.0
+
+    care_ground_truth = [text != "###" for _, text in ground_truth]
+    care_predictions = [True] * len(predictions)
+    for prediction_index, (pred_box, _) in enumerate(predictions):
+        for (gt_box, _), is_care in zip(ground_truth, care_ground_truth):
+            if is_care:
+                continue
+            intersection = _intersection_area(pred_box, gt_box)
+            pred_area = _box_area(pred_box)
+            if pred_area and intersection / pred_area > 0.5:
+                care_predictions[prediction_index] = False
+                break
+
+    matched_ground_truth = set()
+    matched_predictions = set()
+    correct = 0
+    for gt_index, ((gt_box, gt_text), gt_is_care) in enumerate(
+        zip(ground_truth, care_ground_truth)
+    ):
+        if not gt_is_care:
+            continue
+        for pred_index, ((pred_box, pred_text), pred_is_care) in enumerate(
+            zip(predictions, care_predictions)
+        ):
+            if (
+                not pred_is_care
+                or gt_index in matched_ground_truth
+                or pred_index in matched_predictions
+            ):
+                continue
+            if _calculate_iou(pred_box, gt_box) <= 0.5:
+                continue
+
+            # The official evaluator locks a geometric pair even when its
+            # transcription is wrong, then counts only correct recognition.
+            matched_ground_truth.add(gt_index)
+            matched_predictions.add(pred_index)
+            if _spotting_text_matches(gt_text, pred_text):
+                correct += 1
+
+    num_gt_care = sum(care_ground_truth)
+    num_pred_care = sum(care_predictions)
+    if num_gt_care == 0:
+        recall = 1.0
+        precision = 0.0 if num_pred_care else 1.0
+    else:
+        recall = correct / num_gt_care
+        precision = correct / num_pred_care if num_pred_care else 0.0
+    return (
+        0.0
+        if precision + recall == 0
+        else 2.0 * precision * recall / (precision + recall)
+    )
+
+
+def _box_area(box) -> float:
+    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+
+
+def _intersection_area(box1, box2) -> float:
+    return max(0, min(box1[2], box2[2]) - max(box1[0], box2[0])) * max(
+        0, min(box1[3], box2[3]) - max(box1[1], box2[1])
+    )
+
+
+def _spotting_text_matches(ground_truth: str, prediction: str) -> bool:
+    """Match OCRBench/RRC transcriptions, ignoring case and GT edge punctuation."""
+    gt = ground_truth.upper()
+    pred = prediction.upper()
+    if gt == pred:
+        return True
+    special_characters = "!?.:,*\"()·[]/'"
+    candidates = {gt}
+    if gt and gt[0] in special_characters:
+        candidates.add(gt[1:])
+    if gt and gt[-1] in special_characters:
+        candidates.add(gt[:-1])
+    if len(gt) > 1 and gt[0] in special_characters and gt[-1] in special_characters:
+        candidates.add(gt[1:-1])
+    return pred in candidates
+
+
+def _extract_bounding_boxes_robust(predict_str: str) -> List[List]:
+    """Extract ``[x1, y1, x2, y2, text]`` items from prediction text.
+
+    Ported from the official spotting_metric.py extractor, plus unwrapping the
+    ``\\boxed{...}`` wrapper the DatBench prompts request. Without it a boxed
+    list fails literal_eval and falls through to the regex fallback, which
+    keeps escaped quotes and leading spaces in the text and drops items whose
+    text contains brackets or parentheses.
+    """
+    results = []
+    seen = set()
+
+    literal_candidate = predict_str.strip()
+    boxed_match = re.search(
+        r"\\boxed\s*\{(.*)\}\s*$", literal_candidate, flags=re.DOTALL
+    )
+    if boxed_match:
+        literal_candidate = boxed_match.group(1).strip()
+
+    try:
+        data = ast.literal_eval(literal_candidate)
+        if isinstance(data, (list, tuple)):
+            for item in data:
+                if isinstance(item, (list, tuple)) and len(item) >= 5:
+                    x1, y1, x2, y2 = item[:4]
+                    text_content = item[4]
+                    try:
+                        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                        text_content = (
+                            str(text_content)
+                            .replace("\n", "")
+                            .strip()
+                            .strip('"')
+                            .strip("'")
+                        )
+                        if all(0 <= n <= 1000 for n in [x1, y1, x2, y2]):
+                            key = (x1, y1, x2, y2, text_content)
+                            if key not in seen:
+                                seen.add(key)
+                                results.append([x1, y1, x2, y2, text_content])
+                    except (TypeError, ValueError):
+                        continue
+    except (SyntaxError, TypeError, ValueError):
+        items = re.findall(r"[\[\(]\s*([^\[\]\(\)]*?)\s*[\]\)]", predict_str)
+        for item in items:
+            parts = item.split(",", 4)
+            if len(parts) >= 5:
+                try:
+                    x1, y1, x2, y2 = map(int, [p.strip() for p in parts[:4]])
+                    text = parts[4].strip().strip('"').strip("'")
+                    if all(0 <= n <= 1000 for n in [x1, y1, x2, y2]):
+                        key = (x1, y1, x2, y2, text)
+                        if key not in seen:
+                            seen.add(key)
+                            results.append([x1, y1, x2, y2, text])
+                except (TypeError, ValueError):
+                    continue
+
+    return results
 
 
 def _full_page_ocr_evaluation(predict: str, answers: List[str]) -> float:
