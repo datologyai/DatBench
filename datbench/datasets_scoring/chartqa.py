@@ -68,6 +68,9 @@ def _relaxed_correctness(
 
     Rules:
     - Numeric: remove thousands separators; handle percent forms; 5% relative tolerance.
+      When both sides are numbers this is the final verdict, including gold 0
+      (absolute 1e-6 epsilon). With "%" on one side only, either reading counts:
+      "X%" as X (legacy: 24% == 24) or as X / 100 (official: 302.38% == 3.0238).
     - Non-numeric text: strip simple punctuation and normalize whitespace (case-insensitive).
     - Lists: if both look like bracketed lists, compare as order-insensitive sets of items.
     """
@@ -126,13 +129,26 @@ def _relaxed_correctness(
             ):
                 gv_eff = gv_eff * 100.0
 
-        if gv_eff is not None and gv_eff != 0:
-            rel = abs(pv_eff - gv_eff) / abs(gv_eff)
-            if rel <= max_relative_change:
-                return True
-            # Also allow absolute small epsilon for tiny targets
-            if abs(gv_eff) < 1e-6 and abs(pv_eff - gv_eff) <= 1e-6:
-                return True
+        def numbers_match(pred_value: float, gold_value: float) -> bool:
+            # Zero or tiny targets use an absolute epsilon instead.
+            if abs(gold_value) < 1e-6:
+                return abs(pred_value - gold_value) <= 1e-6
+            return (
+                abs(pred_value - gold_value) / abs(gold_value)
+                <= max_relative_change
+            )
+
+        # Two numbers are decided here and never fall through to the text
+        # match, which drops "-" and "." ("-1.6" would equal "1.6").
+        if numbers_match(pv_eff, gv_eff):
+            return True
+        # With "%" on one side only, also accept the official reading
+        # (pix2struct, VLMEvalKit, lmms-eval), where "X%" means X / 100.
+        if p_is_pct != g_is_pct:
+            pv_official = pv / 100.0 if p_is_pct else pv
+            gv_official = gv / 100.0 if g_is_pct else gv
+            return numbers_match(pv_official, gv_official)
+        return False
 
     # List (order-insensitive) pathway: detect [a, b, ...]
     def parse_list(ans: str) -> List[str]:
