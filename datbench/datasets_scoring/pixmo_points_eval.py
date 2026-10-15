@@ -309,12 +309,10 @@ def _point_in_mask(point: Tuple[float, float], mask: List[List[bool]]) -> bool:
     mask_height = len(mask)
     mask_width = len(mask[0])
 
-    # Convert normalized coordinates to mask coordinates
-    x_mask = int(point[0] * mask_width)
-    y_mask = int(point[1] * mask_height)
-
-    # Check bounds
-    if y_mask < 0 or y_mask >= mask_height or x_mask < 0 or x_mask >= mask_width:
-        return False
+    # Convert normalized coordinates to mask coordinates, clamping to the mask
+    # extent so a point on the right/bottom edge (coordinate exactly 1.0) reads
+    # the last column/row instead of falling outside the mask.
+    x_mask = min(max(int(point[0] * mask_width), 0), mask_width - 1)
+    y_mask = min(max(int(point[1] * mask_height), 0), mask_height - 1)
 
     return mask[y_mask][x_mask]
