@@ -158,7 +158,14 @@ def score_sample(sample: Dict[str, Any], model_output: str) -> Dict[str, Any]:
     #===============================================================
     # GROUP 9: Position/Grounding Tasks (IoU)
     #===============================================================
-    elif task_type in ["text grounding en", "VQA with position en"]:
+    elif task_type == "text grounding en":
+        # The reference box is stored as the four answer values; the official
+        # metric is the IoU against it.
+        coords = _extract_coordinates(pred_answer)
+        score = _calculate_iou(coords, answers) if coords else 0.0
+        scoring_method = "text_grounding_iou"
+
+    elif task_type == "VQA with position en":
         score = _vqa_with_position_evaluation(pred_answer, sample)
         scoring_method = "vqa_with_position"
 
