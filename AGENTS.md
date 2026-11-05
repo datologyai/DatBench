@@ -90,9 +90,8 @@ tasks = evaluator.get_inference_tasks()              # InferenceTask(id, image, 
 **Message shape.** One user turn: the image and `task.question`. No system prompt, no few-shot
 examples, no extra instructions. The prompts already say how to format the answer.
 
-**Decoding.** Follow the protocol in the DatBench paper: up to 4,096 new tokens and the sampling
-settings recommended by the model card (greedy if the card gives none). Use the same settings for
-every model you compare.
+**Decoding.** Up to 2,048 new tokens, with the sampling settings recommended by the model card
+(greedy if the card gives none). Use the same settings for every model you compare.
 
 **Answer formats.** The prompts state the expected format. Scorers depend on it:
 
